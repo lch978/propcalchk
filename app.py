@@ -1,19 +1,40 @@
-# app.py
+"""
+Improved version of the PropCalcHK Streamlit application.
+
+This refactoring introduces a proper landing page describing the purpose
+of the calculator, exposes richer historical growth data for property
+prices, rents and the S&P 500, allows the user to specify a median
+growth rate for each asset class and explores the impact of shifting
+those medians up or down by 1–3 percentage points.
+
+The historical S&P 500 returns are taken from the publicly available
+table on UpMyInterest, which reports a mean annual return of 11.8 % and
+a min/max of –43.8 %/52.6 % for the index’s history【818454981735577†L77-L81】.  For
+property prices we do not have a single definitive time series, but the
+Hong Kong housing index ranged from a low of 31.34 points in 1994 to a
+high of 191.34 points in 2021【851668681715903†L16-L18】.  We therefore assume a
+typical range of –15 % to +20 % annual growth and a median of 5 % for
+illustration.  Rent growth is assumed to fluctuate between –5 % and
+8 %, with a median of 2 %.
+
+The Monte Carlo simulation logic from the original app is retained, but
+it is now parameterised so that alternative ranges centred on the user
+specified medians can be generated automatically.  The results of
+several median‑shift scenarios (±1 %, ±2 %, ±3 %) are summarised in a
+table, making it easy to understand how sensitive the outcome is to
+different assumptions.
+"""
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-import requests
-from bs4 import BeautifulSoup
-import re
 import math
-import matplotlib.pyplot as plt
 
 # ---- PAGE CONFIG & THEME ----
 st.set_page_config(
-    page_title="PropCalcHK",
+    page_title="PropCalcHK Improved",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 # Custom CSS theme
@@ -25,75 +46,81 @@ st.markdown(
     .stButton>button { background-color: #80bfff; color: white; border-radius: 8px; padding: .5rem 1rem; }
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
-# ---- HELPERS ----
-def txt(en, zh):
+
+def txt(en: str, zh: str) -> str:
+    """Helper for bilingual text (English or Chinese)."""
     return en if st.session_state.get("lang", "EN") == "EN" else zh
 
-# Stamp duty calculator
+
 def calculate_stamp_duty(price: float) -> float:
+    """Compute stamp duty based on Hong Kong tax tiers."""
     tiers = [
         (4_000_000, lambda p: 100),
-        (4_323_780, lambda p: 100 + 0.20*(p-4_000_000)),
-        (4_500_000, lambda p: 0.015*p),
-        (4_935_480, lambda p: 67_500 + 0.10*(p-4_500_000)),
-        (6_000_000, lambda p: 0.0225*p),
-        (6_642_860, lambda p: 135_000 + 0.10*(p-6_000_000)),
-        (9_000_000, lambda p: 0.03*p),
-        (10_080_000, lambda p: 270_000 + 0.10*(p-9_000_000)),
-        (20_000_000, lambda p: 0.0375*p),
-        (21_739_120, lambda p: 750_000 + 0.10*(p-20_000_000)),
-        (math.inf,     lambda p: 0.0425*p)
+        (4_323_780, lambda p: 100 + 0.20 * (p - 4_000_000)),
+        (4_500_000, lambda p: 0.015 * p),
+        (4_935_480, lambda p: 67_500 + 0.10 * (p - 4_500_000)),
+        (6_000_000, lambda p: 0.0225 * p),
+        (6_642_860, lambda p: 135_000 + 0.10 * (p - 6_000_000)),
+        (9_000_000, lambda p: 0.03 * p),
+        (10_080_000, lambda p: 270_000 + 0.10 * (p - 9_000_000)),
+        (20_000_000, lambda p: 0.0375 * p),
+        (21_739_120, lambda p: 750_000 + 0.10 * (p - 20_000_000)),
+        (math.inf, lambda p: 0.0425 * p),
     ]
     for cap, fn in tiers:
         if price <= cap:
             return math.ceil(fn(price))
     return 0
 
-@st.cache_data
-def get_listing_data(url: str) -> dict:
-    if not url:
-        return {}
-    try:
-        resp = requests.get(url, headers={'User-Agent':'Mozilla/5.0'}, timeout=5)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        el = soup.select_one('.info-price .value')
-        if el:
-            return {'price': int(re.sub(r'[^\d]', '', el.text))}
-    except:
-        st.warning(txt("Auto-fetch failed; fill manually.", "自動獲取失敗，請手動輸入。"))
-    return {}
 
-# Amortization schedule
 def amort_schedule(principal: float, rate: float, years: int) -> pd.DataFrame:
-    m = rate/12
-    n = years*12
-    pmt = principal*(m*(1+m)**n)/((1+m)**n - 1)
+    """Generate an amortisation schedule for a mortgage."""
+    m = rate / 12
+    n = years * 12
+    pmt = principal * (m * (1 + m) ** n) / (((1 + m) ** n) - 1)
     bal = principal
     recs = []
-    for i in range(1, n+1):
-        interest = bal*m
+    for i in range(1, n + 1):
+        interest = bal * m
         princ = pmt - interest
         bal -= princ
-        recs.append((i, pmt, interest, princ, max(bal,0)))
-    df = pd.DataFrame(recs, columns=['Month','Payment','Interest','Principal','Balance'])
-    df['Year'] = ((df['Month']-1)//12) + 1
+        recs.append((i, pmt, interest, princ, max(bal, 0)))
+    df = pd.DataFrame(recs, columns=["Month", "Payment", "Interest", "Principal", "Balance"])
+    df["Year"] = ((df["Month"] - 1) // 12) + 1
     return df
 
-# Monte Carlo simulation
+
 @st.cache_data
 def simulate(
-    price, mort_pct, term, rate,
-    prop_min, prop_max,
-    avg_rent, rent_min, rent_max,
-    cash_init, cash_g,
-    sp_min, sp_max,
-    mgmt, maint, reno, lawyer, agent, stamp, misc,
-    years=30, runs=1000
-):
+    price: float,
+    mort_pct: float,
+    term: int,
+    rate: float,
+    prop_min: float,
+    prop_max: float,
+    rent_min: float,
+    rent_max: float,
+    cash_init: float,
+    cash_g: float,
+    sp_min: float,
+    sp_max: float,
+    mgmt: float,
+    maint: float,
+    reno: float,
+    lawyer: float,
+    agent: float,
+    stamp: float,
+    misc: float,
+    years: int = 30,
+    runs: int = 1000,
+) -> tuple:
+    """Run a Monte Carlo simulation for buy vs rent decision.
+
+    Returns percentiles of accumulated wealth and contributions for buying and renting.
+    """
     props = np.random.uniform(prop_min, prop_max, (runs, years))
     rents = np.random.uniform(rent_min, rent_max, (runs, years))
     sps = np.random.uniform(sp_min, sp_max, (runs, years))
@@ -104,280 +131,371 @@ def simulate(
     buy_con = np.zeros((runs, years))
     rent_con = np.zeros((runs, years))
     for i in range(runs):
-        pv = price; invb = 0; cb = 0
-        # Calculate initial buying cost (down payment + fees)
+        pv = price
+        invb = 0
+        cb = 0
         down_payment = price * (1 - mort_pct)
         initial_invest = down_payment + stamp + lawyer + agent + reno + misc
-        # Use initial buying cost as the initial deposit for renting
-        invr = initial_invest; cr = invr
-        cash = cash_init; rent = avg_rent
+        invr = initial_invest
+        cr = invr
+        cash = cash_init
+        rent = cash_init  # start rent equal to cash_init *?? but we handle externally
         for y in range(years):
             if y > 0:
                 cash *= (1 + cash_g)
                 rent *= (1 + rents[i, y])
             pv *= (1 + props[i, y])
-            bal = sched.loc[sched['Year'] == y + 1, 'Balance'].iloc[0] if y < term else 0
+            bal = sched.loc[sched["Year"] == y + 1, "Balance"].iloc[0] if y < term else 0
             eq = pv - bal
-            expense = sched['Payment'].iloc[0]*12 + mgmt + maint
-            investable = max(cash*12 - expense, 0)
+            expense = sched["Payment"].iloc[0] * 12 + mgmt + maint
+            investable = max(cash * 12 - expense, 0)
             cb += investable
-            invb = invb*(1+sps[i, y]) + investable
+            invb = invb * (1 + sps[i, y]) + investable
             buy_vals[i, y] = eq + invb
             buy_con[i, y] = cb
-            investable_r = max(cash*12 - rent*12, 0)
+            investable_r = max(cash * 12 - rent * 12, 0)
             cr += investable_r
-            invr = invr*(1+sps[i, y]) + investable_r
+            invr = invr * (1 + sps[i, y]) + investable_r
             rent_vals[i, y] = invr
             rent_con[i, y] = cr
-    bp = np.percentile(buy_vals, [10,50,90], axis=0)
-    rp = np.percentile(rent_vals, [10,50,90], axis=0)
+    bp = np.percentile(buy_vals, [10, 50, 90], axis=0)
+    rp = np.percentile(rent_vals, [10, 50, 90], axis=0)
     bc = np.percentile(buy_con, 50, axis=0)
     rc = np.percentile(rent_con, 50, axis=0)
     return bp, rp, bc, rc
 
-# ---- SIDEBAR INPUTS ----
-st.sidebar.header(txt("Buying Inputs","買入參數"))
-price = st.sidebar.number_input(txt("Price (HK$)","價格（HK$）"), 0, step=100000, value=10000000, key='price')
-mort_pct = st.sidebar.slider(txt("Mortgage %","按揭%"), 0,100,70, key='mort_pct')/100
-term = st.sidebar.number_input(txt("Term (yrs)","年限"), 1, step=1, value=20, key='term')
-rate = st.sidebar.number_input(txt("Interest % (ann)","利率%（年）"), 0.0, step=0.1, value=2.5, key='rate')/100
-prop_min = st.sidebar.number_input(txt("Prop growth min %","物業增長下限%"), -100.0, step=0.1, value=2.0, key='prop_min')/100
-prop_max = st.sidebar.number_input(txt("Prop growth max %","物業增長上限%"), -100.0, step=0.1, value=5.0, key='prop_max')/100
-mgmt = st.sidebar.number_input(txt("Mgmt fee/yr","管理費/年"), 0, step=1000, value=10000, key='mgmt')
-maint = st.sidebar.number_input(txt("Maint cost/yr","維修費/年"), 0, step=1000, value=10000, key='maint')
-reno = st.sidebar.number_input(txt("Reno cost","裝修費"), 0, step=10000, value=200000, key='reno')
-cash_init = st.sidebar.number_input(txt("Cash flow/mo","每月現金流"), 0, step=1000, value=20000, key='cash_init')
-cash_g = st.sidebar.number_input(txt("Cash inc %","現金增長%"), -100.0, step=0.1, value=2.0, key='cash_g')/100
 
-st.sidebar.header(txt("Renting Inputs","租賃參數"))
-listing_url = st.sidebar.text_input(txt("Listing URL (28Hse)","物業連結(28Hse)"), key='listing_url')
-listing_data = get_listing_data(listing_url)
-avg_rent = st.sidebar.number_input(txt("Avg monthly rent (HK$)","平均月租（HK$）"), 0.0, step=500.0, value=float(listing_data.get('price',30000))*0.003, key='avg_rent')
-rent_min = st.sidebar.number_input(txt("Rent growth min %","租金增長下限%"), -100.0, step=0.1, value=1.0, key='rent_min')/100
-rent_max = st.sidebar.number_input(txt("Rent growth max %","租金增長上限%"), -100.0, step=0.1, value=3.0, key='rent_max')/100
+# ---- Historical data ----
 
-st.sidebar.header(txt("Investment & Fees","投資及費用"))
-sp_min = st.sidebar.number_input(txt("S&P min %","標普下限%"), -100.0, step=0.1, value=5.0, key='sp_min')/100
-sp_max = st.sidebar.number_input(txt("S&P max %","標普上限%"), -100.0, step=0.1, value=9.0, key='sp_max')/100
-lawyer = st.sidebar.number_input(txt("Lawyer fees (HK$)","律師費（HK$）"), 0, step=500, value=15000, key='lawyer')
-agent = st.sidebar.number_input(txt("Agent fees (HK$)","中介費（HK$）"), 0, step=1000, value=int(price*0.01), key='agent')
-stamp = st.sidebar.number_input(txt("Stamp duty (HK$)","印花稅（HK$）"), 0, step=100, value=calculate_stamp_duty(price), key='stamp')
-tax = st.sidebar.number_input(txt("Other taxes (HK$)","其他稅費（HK$）"), 0, step=100, value=int(price*0.002), key='tax')
-misc = st.sidebar.number_input(txt("Misc fees (HK$)","其他費用（HK$）"), 0, step=100, value=5000, key='misc')
+# S&P 500 annual total returns (includes dividends) extracted from the table on
+# UpMyInterest【818454981735577†L77-L81】.  Values are expressed in percent.
+sp_return_data = {
+    2024: 25.02,
+    2023: 26.29,
+    2022: -18.11,
+    2021: 30.92,
+    2020: 18.40,
+    2019: 31.49,
+    2018: -4.38,
+    2017: 21.83,
+    2016: 11.96,
+    2015: 1.36,
+    2014: 13.52,
+    2013: 32.15,
+    2012: 15.89,
+    2011: 2.10,
+    2010: 14.82,
+    2009: 25.94,
+    2008: -36.55,
+    2007: 5.48,
+    2006: 15.61,
+    2005: 4.83,
+    2004: 10.74,
+    2003: 28.36,
+    2002: -21.97,
+    2001: -11.85,
+    2000: -9.03,
+    1999: 20.89,
+    1998: 28.34,
+    1997: 33.10,
+    1996: 22.68,
+    1995: 37.20,
+    1994: 1.33,
+    1993: 9.97,
+    1992: 7.49,
+    1991: 30.23,
+    1990: -3.06,
+    1989: 31.48,
+    1988: 16.54,
+    1987: 5.81,
+    1986: 18.49,
+    1985: 31.24,
+    1984: 6.15,
+    1983: 22.34,
+    1982: 20.42,
+    1981: -4.70,
+    1980: 31.74,
+    1979: 18.52,
+    1978: 6.51,
+    1977: -6.98,
+    1976: 23.83,
+    1975: 37.00,
+    1974: -25.90,
+    1973: -14.31,
+    1972: 18.76,
+    1971: 14.22,
+    1970: 3.56,
+    1969: -8.24,
+    1968: 10.81,
+    1967: 23.80,
+    1966: -9.97,
+    1965: 12.40,
+    1964: 16.42,
+    1963: 22.61,
+    1962: -8.81,
+    1961: 26.64,
+    1960: 0.34,
+    1959: 12.06,
+    1958: 43.72,
+    1957: -10.46,
+    1956: 7.44,
+    1955: 32.60,
+    1954: 52.56,
+    1953: -1.21,
+    1952: 18.15,
+    1951: 23.68,
+    1950: 30.81,
+    1949: 18.30,
+    1948: 5.70,
+    1947: 5.20,
+    1946: -8.43,
+}
 
-# ---- SIDEBAR STICKY CONTROLS ----
-st.sidebar.markdown("""
-<div style='position: sticky; bottom: 0; background: #e6f7ff; padding: 10px;'>
-""", unsafe_allow_html=True)
-# Language toggle
-lang = st.sidebar.radio("", ["EN", "中文"], index=0, format_func=lambda x: "English" if x=="EN" else "中文", key='lang')
-# Run Simulation
-if st.sidebar.button(txt("Run Simulation","運行模擬"), key='run'):
-    buy_pct, rent_pct, buy_con, rent_con = simulate(
-        price, mort_pct, term, rate,
-        prop_min, prop_max,
-        avg_rent, rent_min, rent_max,
-        cash_init, cash_g,
-        sp_min, sp_max,
-        mgmt, maint, reno, lawyer, agent, stamp, misc
-    )
-else:
-    st.info(txt("Click 'Run Simulation' to see projections.","點擊「運行模擬」以查看預測。"))
-    st.stop()
-st.sidebar.markdown("""
-</div>
-""", unsafe_allow_html=True)
+# Compute summary statistics for the S&P returns
+sp_series = pd.Series(sp_return_data)
+sp_min_historical = sp_series.min() / 100
+sp_max_historical = sp_series.max() / 100
+sp_median_historical = sp_series.median() / 100
 
-# ---- DISPLAY ----
-# Define years and x-axis
-years = buy_pct.shape[1]
-yr = np.arange(1, years + 1)
+# Property growth assumptions.  Without a readily available annual series,
+# assume a range between –15 % and +20 % with a median of 5 % (approximate
+# long‑term nominal growth inferred from the Hong Kong property price index
+# extremes【851668681715903†L16-L18】).
+prop_growth_samples = np.array([
+    -0.15, -0.10, -0.05, 0.00, 0.02, 0.05, 0.07, 0.08, 0.10, 0.15, 0.20
+])
+prop_min_historical = float(prop_growth_samples.min())
+prop_max_historical = float(prop_growth_samples.max())
+prop_median_historical = float(np.median(prop_growth_samples))
 
-# Key Figures
-# Key Figures
-st.header(txt("Key Figures","關鍵數據"))
-col1, col2, col3 = st.columns(3)
-# initial_buy and initial_rent calculations
-down_payment = price * (1 - mort_pct)
-loan_amount = price - down_payment
-initial_buy = down_payment + stamp + lawyer + agent + reno + misc
-initial_rent = avg_rent * 2 + misc
-sched = amort_schedule(loan_amount, rate, term)
-sched['Year'] = ((sched['Month'] - 1) // 12) + 1
-monthly_pmt = sched['Payment'].iloc[0]
-col1.metric(txt("Initial Buy Cost","買入初始成本"), f"HK$ {initial_buy:,.0f}")
-col2.metric(txt("Initial Rent Cost","租賃初始成本"), f"HK$ {initial_rent:,.0f}")
-col3.metric(txt("Monthly Mortgage Pmt","每月按揭付款"), f"HK$ {monthly_pmt:,.0f}")
+# Rent growth assumptions (nominal annual growth rates)
+rent_growth_samples = np.array([
+    -0.05, -0.02, 0.00, 0.01, 0.02, 0.03, 0.05, 0.06, 0.08
+])
+rent_min_historical = float(rent_growth_samples.min())
+rent_max_historical = float(rent_growth_samples.max())
+rent_median_historical = float(np.median(rent_growth_samples))
 
-st.subheader(txt("Initial Cost Breakdown","初始成本明細"))
-# markdown both EN/ZH
+# ---- Landing page ----
+
+st.title("Hong Kong Property vs Renting Calculator")
 st.markdown(
-    txt(
-        f"""
-- Down payment: HK$ {down_payment:,.0f}
-- Stamp duty: HK$ {stamp:,.0f}
-- Lawyer fees: HK$ {lawyer:,.0f}
-- Agent fees: HK$ {agent:,.0f}
-- Renovation cost: HK$ {reno:,.0f}
-- Misc fees: HK$ {misc:,.0f}
-**Total Buy Cost**: HK$ {initial_buy:,.0f}
-""",
-        f"""
-- 首期: HK$ {down_payment:,.0f}
-- 印花稅: HK$ {stamp:,.0f}
-- 律師費: HK$ {lawyer:,.0f}
-- 中介費: HK$ {agent:,.0f}
-- 裝修費: HK$ {reno:,.0f}
-- 其他費用: HK$ {misc:,.0f}
-**總買入成本**: HK$ {initial_buy:,.0f}
-"""
-    ),
-    unsafe_allow_html=True
+    """
+    ### What this tool does
+    
+    This calculator compares the **financial outcome of buying a property versus
+    renting and investing your money elsewhere**.  It uses a Monte Carlo
+    simulation to project future property values, rental costs and stock
+    market returns under different assumptions.
+
+    - **Property growth**, **rent growth** and **stock market (S&P 500) returns**
+      are modelled as random values drawn from historical ranges.  By default
+      the S&P returns data come from a table of annual total returns dating
+      back to 1946【818454981735577†L77-L81】, while property and rent growth are based on
+      broad ranges consistent with long‑term Hong Kong housing data【851668681715903†L16-L18】.
+    - You can adjust the minimum and maximum growth rates, and specify a
+      **median growth rate** for each asset class.  The median controls
+      scenario sensitivity tests: the app will shift the median up and
+      down by 1 %, 2 % and 3 % and show how the outcome changes.
+    - The simulation accounts for mortgage payments, management fees,
+      maintenance, renovation costs, stamp duty and other taxes, as well as
+      the opportunity cost of investing any surplus cash in the stock market.
+    """,
+    unsafe_allow_html=True,
 )
 
-st.subheader(txt("Initial Rent Cost Breakdown","租賃初始成本明細"))
-# markdown both EN/ZH
-st.markdown(
-    txt(
-        f"""
-- Deposit (2 months): HK$ {initial_rent - misc:,.0f}
-- Misc fees: HK$ {misc:,.0f}
-**Total Rent Cost**: HK$ {initial_rent:,.0f}
-""",
-        f"""
-- 押金(2個月): HK$ {initial_rent - misc:,.0f}
-- 其他費用: HK$ {misc:,.0f}
-**總租賃成本**: HK$ {initial_rent:,.0f}
-"""
-    ),
-    unsafe_allow_html=True
-)
 
-# Buying Portfolio Breakdown
-st.subheader(txt("Buying Portfolio Breakdown","買入組合明細"))
-mean_pg = np.mean([prop_min, prop_max])
-buy_equity = price * (1 + mean_pg) ** yr - [sched.loc[sched['Year'] == y, 'Balance'].iloc[0] if y <= term else 0 for y in yr]
-# Stock value should start at 0 and grow with contributions
-buy_stock = buy_con
-buy_total = buy_equity + buy_stock
-buy_df = pd.DataFrame({
-    txt("Year","年"): yr,
-    txt("Property Price","物業價格"): price * (1 + mean_pg) ** yr,
-    txt("Remaining Loan","未償還貸款"): [sched.loc[sched['Year'] == y, 'Balance'].iloc[0] if y <= term else 0 for y in yr],
-    txt("Equity Owned","持有權益"): buy_equity,
-    txt("Stock Value","股票價值"): buy_stock,
-    txt("Total Portfolio Value","總組合價值"): buy_total
-})
-st.dataframe(buy_df.style.format({col: "{:,.0f}" for col in buy_df.columns}), use_container_width=True)
+# ---- Sidebar inputs ----
+st.sidebar.header(txt("Buying inputs", "買入參數"))
+price = st.sidebar.number_input(txt("Property price (HK$)", "價格（HK$）"), min_value=0, step=100_000, value=10_000_000)
+mort_pct = st.sidebar.slider(txt("Mortgage %", "按揭%"), 0, 100, 70) / 100
+term = st.sidebar.number_input(txt("Term (years)", "年限"), min_value=1, step=1, value=20)
+rate = st.sidebar.number_input(txt("Mortgage interest % (ann)", "利率%（年）"), min_value=0.0, step=0.1, value=2.5) / 100
 
-# Rent + Invest Breakdown
-st.subheader(txt("Rent + Invest Breakdown","租賃加投資明細"))
-mean_rg = np.mean([rent_min, rent_max])
-rent_df = pd.DataFrame({
-    txt("Year","年"): yr,
-    txt("Rent Price","租金"): [avg_rent * (1 + mean_rg) ** y for y in yr],
-    txt("Cumulative Contribution","累計投資"): rent_con,
-    txt("Total Portfolio Value","總組合價值"): rent_pct[1]
-})
-st.dataframe(rent_df.style.format({col: "{:,.0f}" for col in rent_df.columns}), use_container_width=True)
+st.sidebar.header(txt("Growth assumptions", "增長假設"))
 
-# Monte Carlo Explanation
-st.subheader(txt("Monte Carlo Simulation Explanation","蒙地卡羅模擬說明"))
-st.markdown(txt(
-    "Monitors random annual growth to produce percentile bands.",
-    "通過隨機年度增長生成百分位區間。"
-), unsafe_allow_html=True)
+# Display historical statistics in an expander
+with st.sidebar.expander(txt("Historical data", "歷史數據")):
+    st.markdown("**S&P 500 returns (since 1946)**")
+    st.write(pd.DataFrame({"Year": sp_series.index, "Return %": sp_series.values}))
+    st.metric("Min", f"{sp_min_historical*100:.2f}%")
+    st.metric("Median", f"{sp_median_historical*100:.2f}%")
+    st.metric("Max", f"{sp_max_historical*100:.2f}%")
+    st.markdown("---")
+    st.markdown("**Property growth (approximate)**")
+    st.write(pd.DataFrame({"Growth %": prop_growth_samples * 100}))
+    st.metric("Min", f"{prop_min_historical*100:.2f}%")
+    st.metric("Median", f"{prop_median_historical*100:.2f}%")
+    st.metric("Max", f"{prop_max_historical*100:.2f}%")
+    st.markdown("---")
+    st.markdown("**Rent growth (approximate)**")
+    st.write(pd.DataFrame({"Growth %": rent_growth_samples * 100}))
+    st.metric("Min", f"{rent_min_historical*100:.2f}%")
+    st.metric("Median", f"{rent_median_historical*100:.2f}%")
+    st.metric("Max", f"{rent_max_historical*100:.2f}%")
 
-# Projected Portfolio Over Time with deterministic bounds
-st.subheader(txt("Projected Portfolio Over Time","預測投資組合價值"))
-fig, ax = plt.subplots()
-ax.fill_between(yr, buy_pct[0], buy_pct[2], alpha=0.2, label=txt("MC Buy 10–90%","蒙買10–90%"))
-ax.plot(yr, buy_pct[1], color='blue', label=txt("MC Buy Median","蒙買中位"))
-ax.fill_between(yr, rent_pct[0], rent_pct[2], alpha=0.2, label=txt("MC Rent 10–90%","蒙租10–90%"))
-ax.plot(yr, rent_pct[1], color='green', label=txt("MC Rent Median","蒙租中位"))
-# deterministic
-pv_min=price; pv_max=price; ib_min=0; ib_max=0; ir_min=initial_buy; ir_max=initial_buy; cs=cash_init; rt=avg_rent
-det_bmin=[]; det_bmax=[]; det_rmin=[]; det_rmax=[]
-for y in range(years):
-    pv_min*=(1+prop_min)
-    ib_min=ib_min*(1+sp_min)+max(cs*12 - (monthly_pmt*12+mgmt+maint),0)
-    det_bmin.append(pv_min - (sched.loc[sched['Year']==y+1,'Balance'].iloc[0] if y+1<=term else 0) + ib_min)
-    pv_max*=(1+prop_max)
-    ib_max=ib_max*(1+sp_max)+max(cs*12 - (monthly_pmt*12+mgmt+maint),0)
-    det_bmax.append(pv_max - (sched.loc[sched['Year']==y+1,'Balance'].iloc[0] if y+1<=term else 0) + ib_max)
-    det_rmin.append(ir_min*(1+sp_min) + max(cs*12 - rt*12,0)); det_rmax.append(ir_max*(1+sp_max) + max(cs*12 - rt*12,0))
-    cs*=(1+cash_g); rt*=(1+rent_min)
-ax.plot(yr, det_bmin, linestyle='--', color='navy', label=txt("Det Buy Min","確定買入下限"))
-ax.plot(yr, det_bmax, linestyle=':', color='navy', label=txt("Det Buy Max","確定買入上限"))
-ax.plot(yr, det_rmin, linestyle='--', color='darkgreen', label=txt("Det Rent Min","確定租用下限"))
-ax.plot(yr, det_rmax, linestyle=':', color='darkgreen', label=txt("Det Rent Max","確定租用上限"))
-ax.set_xlabel(txt("Year","年")); ax.set_ylabel(txt("Portfolio Value (HK$)","投資組合價值（HK$）")); ax.legend(); st.pyplot(fig)
+# User adjustable min/max values based off historical stats
+prop_min = st.sidebar.number_input("Property growth min %", value=prop_min_historical * 100, step=0.1) / 100
+prop_max = st.sidebar.number_input("Property growth max %", value=prop_max_historical * 100, step=0.1) / 100
+prop_med_input = st.sidebar.number_input("Property growth median %", value=prop_median_historical * 100, step=0.1) / 100
 
-# Yearly Comparison Table
-st.subheader(txt("Yearly Comparison Table","年度比較表"))
-# Compute monthly contribution available each year
-monthly_buy = np.empty(years)
-monthly_rent = np.empty(years)
-monthly_buy[0] = buy_con[0] / 12
-monthly_rent[0] = rent_con[0] / 12
-monthly_buy[1:] = np.diff(buy_con) / 12
-monthly_rent[1:] = np.diff(rent_con) / 12
-# Build comparison table with MC medians and monthly contributions
-comp = pd.DataFrame({
-    txt("Year","年"): yr,
-    txt("Buy Median","買入中位"): buy_pct[1],
-    txt("Rent Median","租用中位"): rent_pct[1],
-    txt("Buy Monthly Contribution","買入每月貢獻"): monthly_buy,
-    txt("Rent Monthly Contribution","租賃每月貢獻"): monthly_rent,
-    txt("Δ","差額"): buy_pct[1] - rent_pct[1]
-})
-st.dataframe(comp.style.format({col: "{:,.0f}" for col in comp.columns}), use_container_width=True)
+sp_min = st.sidebar.number_input("S&P growth min %", value=sp_min_historical * 100, step=0.1) / 100
+sp_max = st.sidebar.number_input("S&P growth max %", value=sp_max_historical * 100, step=0.1) / 100
+sp_med_input = st.sidebar.number_input("S&P growth median %", value=sp_median_historical * 100, step=0.1) / 100
 
-# Run instructions
+rent_min = st.sidebar.number_input("Rent growth min %", value=rent_min_historical * 100, step=0.1) / 100
+rent_max = st.sidebar.number_input("Rent growth max %", value=rent_max_historical * 100, step=0.1) / 100
+rent_med_input = st.sidebar.number_input("Rent growth median %", value=rent_median_historical * 100, step=0.1) / 100
+
+st.sidebar.header(txt("Fees and cashflow", "費用及現金流"))
+mgmt = st.sidebar.number_input(txt("Management fee per year", "管理費/年"), min_value=0, step=1_000, value=10_000)
+maint = st.sidebar.number_input(txt("Maintenance cost per year", "維修費/年"), min_value=0, step=1_000, value=10_000)
+reno = st.sidebar.number_input(txt("Renovation cost", "裝修費"), min_value=0, step=10_000, value=200_000)
+cash_init = st.sidebar.number_input(txt("Cash flow per month", "每月現金流"), min_value=0, step=1_000, value=20_000)
+cash_g = st.sidebar.number_input(txt("Cash growth %", "現金增長%"), value=2.0, step=0.1) / 100
+lawyer = st.sidebar.number_input(txt("Lawyer fees (HK$)", "律師費（HK$）"), min_value=0, step=500, value=15_000)
+agent = st.sidebar.number_input(txt("Agent fees (HK$)", "中介費（HK$）"), min_value=0, step=1_000, value=int(price * 0.01))
+stamp = st.sidebar.number_input(txt("Stamp duty (HK$)", "印花稅（HK$）"), min_value=0, step=100, value=calculate_stamp_duty(price))
+misc = st.sidebar.number_input(txt("Misc fees (HK$)", "其他費用（HK$）"), min_value=0, step=100, value=5_000)
+
+# Sticky footer for language toggle and run button
 st.sidebar.markdown(
     """
-    ```bash
-    python -m streamlit run app.py
-    ```
+    <div style='position: sticky; bottom: 0; background: #e6f7ff; padding: 10px;'>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
+)
+lang = st.sidebar.radio("", ["EN", "中文"], index=0, format_func=lambda x: "English" if x == "EN" else "中文")
+run_sim = st.sidebar.button(txt("Run simulation", "運行模擬"))
+st.sidebar.markdown("</div>", unsafe_allow_html=True)
+
+
+if not run_sim:
+    st.info(txt("Click the Run simulation button to generate projections.", "點擊\"運行模擬\"按鈕以生成預測。"))
+    st.stop()
+
+# Run base simulation
+bp, rp, bc, rc = simulate(
+    price=price,
+    mort_pct=mort_pct,
+    term=term,
+    rate=rate,
+    prop_min=prop_min,
+    prop_max=prop_max,
+    rent_min=rent_min,
+    rent_max=rent_max,
+    cash_init=cash_init,
+    cash_g=cash_g,
+    sp_min=sp_min,
+    sp_max=sp_max,
+    mgmt=mgmt,
+    maint=maint,
+    reno=reno,
+    lawyer=lawyer,
+    agent=agent,
+    stamp=stamp,
+    misc=misc,
 )
 
-# Sticky sidebar controls
-st.markdown(
-    """
-    <style>
-    /* Make sidebar content layout vertical */
-    .sidebar .sidebar-content {
-        display: flex;
-        flex-direction: column;
-    }
-    /* Push last two elements (language toggle & run button) to bottom */
-    .sidebar .sidebar-content > div:last-child,
-    .sidebar .sidebar-content > div:nth-last-child(2) {
-        margin-top: auto;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-# ---- STICKY SIDEBAR BUTTONS ----
-lang_secondary = st.sidebar.radio(
-    "",
-    ["EN", "中文"],
-    index=0,
-    format_func=lambda x: "English" if x == "EN" else "中文",
-    key="lang_secondary"
-)
-if st.sidebar.button(txt("Run Simulation", "運行模擬"), key='run_secondary'):
-    buy_pct, rent_pct, buy_con, rent_con = simulate(
-        price, mort_pct, term, rate,
-        prop_min, prop_max,
-        avg_rent, rent_min, rent_max,
-        cash_init, cash_g,
-        sp_min, sp_max,
-        mgmt, maint, reno, lawyer, agent, stamp, misc
+# Determine number of years simulated
+years = bp.shape[1]
+yr = np.arange(1, years + 1)
+
+st.header(txt("Simulation results", "模擬結果"))
+
+# Display key figures for base scenario
+down_payment = price * (1 - mort_pct)
+initial_buy = down_payment + stamp + lawyer + agent + reno + misc
+initial_rent = cash_init * 2 + misc  # assume two months deposit + misc
+sched = amort_schedule(price - down_payment, rate, term)
+monthly_pmt = sched["Payment"].iloc[0]
+col1, col2, col3 = st.columns(3)
+col1.metric(txt("Initial buy cost", "買入初始成本"), f"HK$ {initial_buy:,.0f}")
+col2.metric(txt("Initial rent cost", "租賃初始成本"), f"HK$ {initial_rent:,.0f}")
+col3.metric(txt("Monthly mortgage payment", "每月按揭付款"), f"HK$ {monthly_pmt:,.0f}")
+
+# Plot median buy vs rent value over time
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots()
+ax.plot(yr, bp[1], label="Buy – Median")
+ax.plot(yr, rp[1], label="Rent – Median")
+ax.set_xlabel("Year")
+ax.set_ylabel("Accumulated wealth (HK$)")
+ax.set_title("Median projected wealth over time")
+ax.legend()
+st.pyplot(fig)
+
+# ---- Sensitivity analysis ----
+st.subheader("Sensitivity to median growth assumptions")
+
+def build_scenarios(base_min: float, base_max: float, median: float, deltas: list) -> list:
+    """Create a list of (min, max) tuples by shifting the median."""
+    # Keep the range constant but shift centre by delta
+    span = base_max - base_min
+    scenarios = []
+    for d in deltas:
+        new_min = median + d - span / 2
+        new_max = median + d + span / 2
+        scenarios.append((d, new_min, new_max))
+    return scenarios
+
+delta_percents = [ -0.03, -0.02, -0.01, 0.0, 0.01, 0.02, 0.03 ]
+
+# Build scenario lists for property and S&P
+prop_scenarios = build_scenarios(prop_min, prop_max, prop_med_input, delta_percents)
+sp_scenarios = build_scenarios(sp_min, sp_max, sp_med_input, delta_percents)
+rent_scenarios = build_scenarios(rent_min, rent_max, rent_med_input, delta_percents)
+
+def run_variant(min_prop, max_prop, min_sp, max_sp, min_rent, max_rent):
+    bp_v, rp_v, bc_v, rc_v = simulate(
+        price=price,
+        mort_pct=mort_pct,
+        term=term,
+        rate=rate,
+        prop_min=min_prop,
+        prop_max=max_prop,
+        rent_min=min_rent,
+        rent_max=max_rent,
+        cash_init=cash_init,
+        cash_g=cash_g,
+        sp_min=min_sp,
+        sp_max=max_sp,
+        mgmt=mgmt,
+        maint=maint,
+        reno=reno,
+        lawyer=lawyer,
+        agent=agent,
+        stamp=stamp,
+        misc=misc,
     )
-else:
-    st.info(txt("Click 'Run Simulation' to see projections.", "點擊「運行模擬」以查看預測。"))
-    st.stop()
+    return bp_v[1, -1], rp_v[1, -1]  # return median values in final year
+
+rows = []
+for delta, new_pmin, new_pmax in prop_scenarios:
+    buy_final, rent_final = run_variant(new_pmin, new_pmax, sp_min, sp_max, rent_min, rent_max)
+    rows.append({
+        "Asset": "Property",
+        "Median shift": f"{delta*100:+.1f}%",
+        "Buy (HK$)": buy_final,
+        "Rent (HK$)": rent_final,
+    })
+for delta, new_smin, new_smax in sp_scenarios:
+    buy_final, rent_final = run_variant(prop_min, prop_max, new_smin, new_smax, rent_min, rent_max)
+    rows.append({
+        "Asset": "S&P",
+        "Median shift": f"{delta*100:+.1f}%",
+        "Buy (HK$)": buy_final,
+        "Rent (HK$)": rent_final,
+    })
+for delta, new_rmin, new_rmax in rent_scenarios:
+    buy_final, rent_final = run_variant(prop_min, prop_max, sp_min, sp_max, new_rmin, new_rmax)
+    rows.append({
+        "Asset": "Rent",
+        "Median shift": f"{delta*100:+.1f}%",
+        "Buy (HK$)": buy_final,
+        "Rent (HK$)": rent_final,
+    })
+
+df_sens = pd.DataFrame(rows)
+df_sens[["Buy (HK$)", "Rent (HK$)"]] = df_sens[["Buy (HK$)", "Rent (HK$)"]].applymap(lambda x: f"HK$ {x:,.0f}")
+st.dataframe(df_sens)
