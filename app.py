@@ -316,23 +316,41 @@ st.sidebar.header(txt("Growth assumptions", "增長假設"))
 
 # Display historical statistics in an expander
 with st.sidebar.expander(txt("Historical data", "歷史數據")):
-    st.markdown("**S&P 500 returns (since 1946)**")
-    st.write(pd.DataFrame({"Year": sp_series.index, "Return %": sp_series.values}))
-    st.metric("Min", f"{sp_min_historical*100:.2f}%")
-    st.metric("Median", f"{sp_median_historical*100:.2f}%")
-    st.metric("Max", f"{sp_max_historical*100:.2f}%")
-    st.markdown("---")
-    st.markdown("**Property growth (approximate)**")
-    st.write(pd.DataFrame({"Growth %": prop_growth_samples * 100}))
-    st.metric("Min", f"{prop_min_historical*100:.2f}%")
-    st.metric("Median", f"{prop_median_historical*100:.2f}%")
-    st.metric("Max", f"{prop_max_historical*100:.2f}%")
-    st.markdown("---")
-    st.markdown("**Rent growth (approximate)**")
-    st.write(pd.DataFrame({"Growth %": rent_growth_samples * 100}))
-    st.metric("Min", f"{rent_min_historical*100:.2f}%")
-    st.metric("Median", f"{rent_median_historical*100:.2f}%")
-    st.metric("Max", f"{rent_max_historical*100:.2f}%")
+        st.markdown("**S&P 500 returns (since 1946)**")
+        # Present the historical S&P 500 returns using a uniform table style.  We use
+        # st.dataframe for all of the historical tables so that they share the
+        # same look and feel and interactive capabilities.  Each percentage is
+        # expressed as a plain number without converting to percent notation here
+        # because the metrics below already display min/median/max as percentages.
+        sp_df = pd.DataFrame({
+            "Year": sp_series.index,
+            "Return (%)": sp_series.values,
+        })
+        st.dataframe(sp_df, hide_index=True)
+        st.metric("Min", f"{sp_min_historical*100:.2f}%")
+        st.metric("Median", f"{sp_median_historical*100:.2f}%")
+        st.metric("Max", f"{sp_max_historical*100:.2f}%")
+        st.markdown("---")
+
+        st.markdown("**Property growth (approximate)**")
+        # Display property growth samples in a consistent table format.  Each value
+        # is multiplied by 100 to convert to percentage points.
+        prop_df = pd.DataFrame({"Growth (%)": (prop_growth_samples * 100).round(2)})
+        st.dataframe(prop_df, hide_index=True)
+        st.metric("Min", f"{prop_min_historical*100:.2f}%")
+        st.metric("Median", f"{prop_median_historical*100:.2f}%")
+        st.metric("Max", f"{prop_max_historical*100:.2f}%")
+        st.markdown("---")
+
+        st.markdown("**Rent growth (approximate)**")
+        # Display rent growth samples using the same table style.  Multiplying
+        # by 100 converts the decimal rates to percentage points for easy
+        # comparison.
+        rent_df = pd.DataFrame({"Growth (%)": (rent_growth_samples * 100).round(2)})
+        st.dataframe(rent_df, hide_index=True)
+        st.metric("Min", f"{rent_min_historical*100:.2f}%")
+        st.metric("Median", f"{rent_median_historical*100:.2f}%")
+        st.metric("Max", f"{rent_max_historical*100:.2f}%")
 
 # User adjustable min/max values based off historical stats
 prop_min = st.sidebar.number_input("Property growth min %", value=prop_min_historical * 100, step=0.1) / 100
@@ -351,7 +369,15 @@ st.sidebar.header(txt("Fees and cashflow", "費用及現金流"))
 mgmt = st.sidebar.number_input(txt("Management fee per year", "管理費/年"), min_value=0, step=1_000, value=10_000)
 maint = st.sidebar.number_input(txt("Maintenance cost per year", "維修費/年"), min_value=0, step=1_000, value=10_000)
 reno = st.sidebar.number_input(txt("Renovation cost", "裝修費"), min_value=0, step=10_000, value=200_000)
-cash_init = st.sidebar.number_input(txt("Cash flow per month", "每月現金流"), min_value=0, step=1_000, value=20_000)
+cash_init = st.sidebar.number_input(
+    txt(
+        "Cash flow per month (total budget)",
+        "每月可用資金（包含生活費與投資）",
+    ),
+    min_value=0,
+    step=1_000,
+    value=20_000,
+)
 cash_g = st.sidebar.number_input(txt("Cash growth %", "現金增長%"), value=2.0, step=0.1) / 100
 lawyer = st.sidebar.number_input(txt("Lawyer fees (HK$)", "律師費（HK$）"), min_value=0, step=500, value=15_000)
 agent = st.sidebar.number_input(txt("Agent fees (HK$)", "中介費（HK$）"), min_value=0, step=1_000, value=int(price * 0.01))
@@ -414,16 +440,44 @@ col1.metric(txt("Initial buy cost", "買入初始成本"), f"HK$ {initial_buy:,.
 col2.metric(txt("Initial rent cost", "租賃初始成本"), f"HK$ {initial_rent:,.0f}")
 col3.metric(txt("Monthly mortgage payment", "每月按揭付款"), f"HK$ {monthly_pmt:,.0f}")
 
-# Plot median buy vs rent value over time
+# Plot detailed wealth projections and contributions
 import matplotlib.pyplot as plt
-fig, ax = plt.subplots()
-ax.plot(yr, bp[1], label="Buy – Median")
-ax.plot(yr, rp[1], label="Rent – Median")
+
+# Wealth projections: 10th, 50th (median) and 90th percentiles for both strategies
+fig, ax = plt.subplots(figsize=(8, 4))
+percentiles = ["10th", "50th", "90th"]
+colors_buy = ["#c6dbef", "#6baed6", "#2171b5"]  # light to dark blue for buy
+colors_rent = ["#c7e9c0", "#74c476", "#238b45"]  # light to dark green for rent
+for i, p in enumerate(percentiles):
+    ax.plot(yr, bp[i], label=f"Buy – {p}", color=colors_buy[i])
+    ax.plot(yr, rp[i], label=f"Rent – {p}", linestyle="--", color=colors_rent[i])
 ax.set_xlabel("Year")
 ax.set_ylabel("Accumulated wealth (HK$)")
-ax.set_title("Median projected wealth over time")
-ax.legend()
+ax.set_title(txt("Buy vs Rent wealth projections", "購買與租賃財富預測"))
+ax.legend(loc="upper left", fontsize="small")
 st.pyplot(fig)
+
+# Median cumulative contributions invested for both strategies
+fig2, ax2 = plt.subplots(figsize=(8, 3))
+ax2.plot(yr, bc, label=txt("Buy – Contributions", "購買 – 投入金額"), color="#6baed6")
+ax2.plot(yr, rc, label=txt("Rent – Contributions", "租賃 – 投入金額"), color="#74c476")
+ax2.set_xlabel("Year")
+ax2.set_ylabel("Contributions (HK$)")
+ax2.set_title(txt("Median contributions over time", "投入金額中位數隨時間變化"))
+ax2.legend(loc="upper left", fontsize="small")
+st.pyplot(fig2)
+
+# Summarise final median outcomes and differences
+final_buy = bp[1][-1]
+final_rent = rp[1][-1]
+final_bc = bc[-1]
+final_rc = rc[-1]
+diff = final_buy - final_rent
+col4, col5, col6 = st.columns(3)
+col4.metric(txt("Median final wealth (Buy)", "購買策略最終財富中位數"), f"HK$ {final_buy:,.0f}")
+col5.metric(txt("Median final wealth (Rent)", "租賃策略最終財富中位數"), f"HK$ {final_rent:,.0f}")
+sign = "+" if diff >= 0 else "-"
+col6.metric(txt("Difference (Buy − Rent)", "購買與租賃差額"), f"{sign}HK$ {abs(diff):,.0f}")
 
 # ---- Sensitivity analysis ----
 st.subheader("Sensitivity to median growth assumptions")
@@ -498,4 +552,5 @@ for delta, new_rmin, new_rmax in rent_scenarios:
 
 df_sens = pd.DataFrame(rows)
 df_sens[["Buy (HK$)", "Rent (HK$)"]] = df_sens[["Buy (HK$)", "Rent (HK$)"]].applymap(lambda x: f"HK$ {x:,.0f}")
-st.dataframe(df_sens)
+    # Present the sensitivity analysis with the same table style used above.
+    st.dataframe(df_sens, hide_index=True)
