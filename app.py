@@ -524,33 +524,39 @@ def run_variant(min_prop, max_prop, min_sp, max_sp, min_rent, max_rent):
     )
     return bp_v[1, -1], rp_v[1, -1]  # return median values in final year
 
-rows = []
-for delta, new_pmin, new_pmax in prop_scenarios:
-    buy_final, rent_final = run_variant(new_pmin, new_pmax, sp_min, sp_max, rent_min, rent_max)
-    rows.append({
-        "Asset": "Property",
-        "Median shift": f"{delta*100:+.1f}%",
-        "Buy (HK$)": buy_final,
-        "Rent (HK$)": rent_final,
-    })
-for delta, new_smin, new_smax in sp_scenarios:
-    buy_final, rent_final = run_variant(prop_min, prop_max, new_smin, new_smax, rent_min, rent_max)
-    rows.append({
-        "Asset": "S&P",
-        "Median shift": f"{delta*100:+.1f}%",
-        "Buy (HK$)": buy_final,
-        "Rent (HK$)": rent_final,
-    })
-for delta, new_rmin, new_rmax in rent_scenarios:
-    buy_final, rent_final = run_variant(prop_min, prop_max, sp_min, sp_max, new_rmin, new_rmax)
-    rows.append({
-        "Asset": "Rent",
-        "Median shift": f"{delta*100:+.1f}%",
-        "Buy (HK$)": buy_final,
-        "Rent (HK$)": rent_final,
-    })
-
-df_sens = pd.DataFrame(rows)
-df_sens[["Buy (HK$)", "Rent (HK$)"]] = df_sens[["Buy (HK$)", "Rent (HK$)"]].applymap(lambda x: f"HK$ {x:,.0f}")
+# Build and display the sensitivity analysis in a dedicated function.  Moving
+# this logic into its own function avoids indentation issues at the top level.
+def display_sensitivity():
+    """Generate and display the sensitivity analysis table."""
+    rows = []
+    for delta, new_pmin, new_pmax in prop_scenarios:
+        buy_final, rent_final = run_variant(new_pmin, new_pmax, sp_min, sp_max, rent_min, rent_max)
+        rows.append({
+            "Asset": "Property",
+            "Median shift": f"{delta*100:+.1f}%",
+            "Buy (HK$)": buy_final,
+            "Rent (HK$)": rent_final,
+        })
+    for delta, new_smin, new_smax in sp_scenarios:
+        buy_final, rent_final = run_variant(prop_min, prop_max, new_smin, new_smax, rent_min, rent_max)
+        rows.append({
+            "Asset": "S&P",
+            "Median shift": f"{delta*100:+.1f}%",
+            "Buy (HK$)": buy_final,
+            "Rent (HK$)": rent_final,
+        })
+    for delta, new_rmin, new_rmax in rent_scenarios:
+        buy_final, rent_final = run_variant(prop_min, prop_max, sp_min, sp_max, new_rmin, new_rmax)
+        rows.append({
+            "Asset": "Rent",
+            "Median shift": f"{delta*100:+.1f}%",
+            "Buy (HK$)": buy_final,
+            "Rent (HK$)": rent_final,
+        })
+    df_sens = pd.DataFrame(rows)
+    df_sens[["Buy (HK$)", "Rent (HK$)"]] = df_sens[["Buy (HK$)", "Rent (HK$)"]].applymap(lambda x: f"HK$ {x:,.0f}")
     # Present the sensitivity analysis with the same table style used above.
     st.dataframe(df_sens, hide_index=True)
+
+# Call the sensitivity display function
+display_sensitivity()
