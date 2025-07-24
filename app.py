@@ -114,6 +114,7 @@ def simulate(
     agent: float,
     stamp: float,
     misc: float,
+    init_rent: float = None,
     years: int = 30,
     runs: int = 1000,
 ) -> tuple:
@@ -147,7 +148,9 @@ def simulate(
         invr = initial_invest
         cr = invr
         cash = cash_init
-        rent = cash_init  # start rent equal to cash_init *?? but we handle externally
+        # Start rent equal to the user‑specified initial rent.  If no value
+        # is provided, fall back to cash_init to preserve previous behaviour.
+        rent = init_rent if init_rent is not None else cash_init
         for y in range(years):
             if y > 0:
                 cash *= (1 + cash_g)
@@ -387,6 +390,14 @@ cash_init = st.sidebar.number_input(
     value=20_000,
 )
 cash_g = st.sidebar.number_input(txt("Cash growth %", "現金增長%"), value=2.0, step=0.1) / 100
+# Allow the user to set the initial monthly rent separately from the cash budget.  By default
+# this is prepopulated with the cash_init value to preserve earlier behaviour.
+init_rent_input = st.sidebar.number_input(
+    txt("Initial monthly rent (HK$)", "初始月租（HK$）"),
+    min_value=0,
+    step=1_000,
+    value=int(cash_init),
+)
 lawyer = st.sidebar.number_input(txt("Lawyer fees (HK$)", "律師費（HK$）"), min_value=0, step=500, value=15_000)
 agent = st.sidebar.number_input(txt("Agent fees (HK$)", "中介費（HK$）"), min_value=0, step=1_000, value=int(price * 0.01))
 stamp = st.sidebar.number_input(txt("Stamp duty (HK$)", "印花稅（HK$）"), min_value=0, step=100, value=calculate_stamp_duty(price))
@@ -429,6 +440,7 @@ bp, rp, bc, rc = simulate(
     agent=agent,
     stamp=stamp,
     misc=misc,
+    init_rent=init_rent_input,
 )
 
 # Determine number of years simulated
@@ -440,7 +452,7 @@ st.header(txt("Simulation results", "模擬結果"))
 # Display key figures for base scenario
 down_payment = price * (1 - mort_pct)
 initial_buy = down_payment + stamp + lawyer + agent + reno + misc
-initial_rent = cash_init * 2 + misc  # assume two months deposit + misc
+initial_rent = init_rent_input * 2 + misc  # two months deposit plus misc
 sched = amort_schedule(price - down_payment, rate, term)
 monthly_pmt = sched["Payment"].iloc[0]
 col1, col2, col3 = st.columns(3)
@@ -587,6 +599,7 @@ def run_variant(min_prop, max_prop, min_sp, max_sp, min_rent, max_rent):
         agent=agent,
         stamp=stamp,
         misc=misc,
+        init_rent=init_rent_input,
     )
     return bp_v[1, -1], rp_v[1, -1]  # return median values in final year
 
