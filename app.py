@@ -600,6 +600,11 @@ def run_variant(min_prop, max_prop, min_sp, max_sp, min_rent, max_rent):
         stamp=stamp,
         misc=misc,
         init_rent=init_rent_input,
+        # Use a reduced number of Monte Carlo runs for the sensitivity analysis to
+        # speed up the calculation.  A smaller sample (e.g. 200 runs) still
+        # provides a reasonable approximation of the effect of shifting the
+        # medians without blocking the UI for too long.
+        runs=200,
     )
     return bp_v[1, -1], rp_v[1, -1]  # return median values in final year
 
