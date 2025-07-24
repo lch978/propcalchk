@@ -139,6 +139,14 @@ def simulate(
     rent_vals = np.zeros((runs, years))
     buy_con = np.zeros((runs, years))
     rent_con = np.zeros((runs, years))
+    # Arrays to store additional components for median calculations.  We track the
+    # property value, mortgage balance, equity and invested portfolio for the buy
+    # strategy, and the invested portfolio for the rent strategy.
+    prop_vals = np.zeros((runs, years))
+    mort_balances = np.zeros((runs, years))
+    invb_vals = np.zeros((runs, years))
+    invr_vals = np.zeros((runs, years))
+    buy_eq_vals = np.zeros((runs, years))
     for i in range(runs):
         pv = price
         invb = 0
@@ -164,16 +172,28 @@ def simulate(
             invb = invb * (1 + sps[i, y]) + investable
             buy_vals[i, y] = eq + invb
             buy_con[i, y] = cb
+            # Store components for median tracking
+            prop_vals[i, y] = pv
+            mort_balances[i, y] = bal
+            invb_vals[i, y] = invb
+            buy_eq_vals[i, y] = eq
             investable_r = max(cash * 12 - rent * 12, 0)
             cr += investable_r
             invr = invr * (1 + sps[i, y]) + investable_r
             rent_vals[i, y] = invr
             rent_con[i, y] = cr
+            invr_vals[i, y] = invr
     bp = np.percentile(buy_vals, [10, 50, 90], axis=0)
     rp = np.percentile(rent_vals, [10, 50, 90], axis=0)
     bc = np.percentile(buy_con, 50, axis=0)
     rc = np.percentile(rent_con, 50, axis=0)
-    return bp, rp, bc, rc
+    # Compute medians for additional tracked arrays
+    beq = np.percentile(buy_eq_vals, 50, axis=0)
+    pv_median = np.percentile(prop_vals, 50, axis=0)
+    bal_median = np.percentile(mort_balances, 50, axis=0)
+    invb_median = np.percentile(invb_vals, 50, axis=0)
+    invr_median = np.percentile(invr_vals, 50, axis=0)
+    return bp, rp, bc, rc, beq, pv_median, bal_median, invb_median, invr_median
 
 
 # ---- Historical data ----
@@ -420,7 +440,7 @@ if not run_sim:
     st.stop()
 
 # Run base simulation
-bp, rp, bc, rc = simulate(
+bp, rp, bc, rc, beq, pv_med, bal_med, invb_med, invr_med = simulate(
     price=price,
     mort_pct=mort_pct,
     term=term,
@@ -557,6 +577,59 @@ df_summary = pd.DataFrame(summary_rows)
 st.subheader(txt("Summary statistics", "彙總統計"))
 st.dataframe(df_summary, hide_index=True)
 
+# ---- Detailed year-by-year comparison tables ----
+years_count = len(bp[0])
+year_numbers = np.arange(1, years_count + 1)
+# Compute annual and monthly contributions from the median cumulative contributions
+buy_annual = np.concatenate(([bc[0]], bc[1:] - bc[:-1]))
+rent_annual = np.concatenate(([rc[0]], rc[1:] - rc[:-1]))
+buy_monthly = buy_annual / 12
+rent_monthly = rent_annual / 12
+
+# Table 1: Comparison of total wealth, monthly contributions and property equity
+df_yearly = pd.DataFrame({
+    txt("Year", "年份"): year_numbers,
+    txt("Buy – Total wealth", "購買 – 總財富"): bp[1],
+    txt("Rent – Total wealth", "租賃 – 總財富"): rp[1],
+    txt("Buy – Property equity", "購買 – 物業淨值"): beq,
+    txt("Buy – Monthly contributions", "購買 – 每月投入"): buy_monthly,
+    txt("Rent – Monthly contributions", "租賃 – 每月投入"): rent_monthly,
+})
+def _format_currency(x):
+    return f"HK$ {x:,.0f}" if isinstance(x, (int, float)) else x
+def _format_currency2(x):
+    return f"HK$ {x:,.0f}" if isinstance(x, (int, float)) else x
+
+# Format currency columns
+for col in df_yearly.columns[1:]:
+    df_yearly[col] = df_yearly[col].apply(lambda v: f"HK$ {v:,.0f}" if isinstance(v, (int, float)) else v)
+
+st.subheader(txt("Year‑by‑year comparison (median)", "按年份比較（中位數）"))
+st.dataframe(df_yearly, hide_index=True)
+
+# Table 2: Property value and mortgage balance statistics
+df_prop = pd.DataFrame({
+    txt("Year", "年份"): year_numbers,
+    txt("Median property value", "物業價值中位數"): pv_med,
+    txt("Median mortgage balance", "按揭餘額中位數"): bal_med,
+    txt("Median property equity", "物業淨值中位數"): beq,
+})
+for col in df_prop.columns[1:]:
+    df_prop[col] = df_prop[col].apply(lambda v: f"HK$ {v:,.0f}" if isinstance(v, (int, float)) else v)
+st.subheader(txt("Property and mortgage statistics (median)", "物業及按揭統計（中位數）"))
+st.dataframe(df_prop, hide_index=True)
+
+# Table 3: Invested portfolio statistics
+df_inv = pd.DataFrame({
+    txt("Year", "年份"): year_numbers,
+    txt("Median invested portfolio (Buy)", "購買 – 投資組合中位數"): invb_med,
+    txt("Median invested portfolio (Rent)", "租賃 – 投資組合中位數"): invr_med,
+})
+for col in df_inv.columns[1:]:
+    df_inv[col] = df_inv[col].apply(lambda v: f"HK$ {v:,.0f}" if isinstance(v, (int, float)) else v)
+st.subheader(txt("Invested portfolio statistics (median)", "投資組合統計（中位數）"))
+st.dataframe(df_inv, hide_index=True)
+
 # ---- Sensitivity analysis ----
 st.subheader("Sensitivity to median growth assumptions")
 
@@ -579,7 +652,7 @@ sp_scenarios = build_scenarios(sp_min, sp_max, sp_med_input, delta_percents)
 rent_scenarios = build_scenarios(rent_min, rent_max, rent_med_input, delta_percents)
 
 def run_variant(min_prop, max_prop, min_sp, max_sp, min_rent, max_rent):
-    bp_v, rp_v, bc_v, rc_v = simulate(
+    bp_v, rp_v, bc_v, rc_v, *_ = simulate(
         price=price,
         mort_pct=mort_pct,
         term=term,
