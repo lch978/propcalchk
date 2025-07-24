@@ -717,3 +717,52 @@ def display_sensitivity():
 
 # Call the sensitivity display function
 display_sensitivity()
+
+# ---- Interpretation and summary ----
+summary_en = (
+    f"Under the current assumptions, the median final wealth for buying is HK$ {final_buy:,.0f}, "
+    f"while renting yields HK$ {final_rent:,.0f}. The difference of {sign}HK$ {abs(diff):,.0f} "
+    f"means that buying {'outperforms' if diff >= 0 else 'lags'} renting by {percent_diff*100:.1f}% in the median case. "
+    f"To reach these outcomes, the buy strategy invests a total of HK$ {final_bc:,.0f} over the period, compared with "
+    f"HK$ {final_rc:,.0f} for the rent strategy. "
+    "Note that your results depend heavily on the growth rates for property prices, rents and the stock market. "
+    "Lower property growth or higher stock returns could favour renting, while stronger property appreciation would favour buying."
+)
+summary_zh = (
+    f"根據當前假設，購買策略的最終財富中位數為 HK$ {final_buy:,.0f}，" \
+    f"而租賃策略為 HK$ {final_rent:,.0f}。二者差額為 {sign}HK$ {abs(diff):,.0f}，" \
+    f"意味著在中位數情況下購買比租賃{'多' if diff >= 0 else '少'} {percent_diff*100:.1f}% 的最終財富。" \
+    f"為達到這一結果，購買策略在整個期間投入了 HK$ {final_bc:,.0f}，" \
+    f"而租賃策略投入了 HK$ {final_rc:,.0f}。" \
+    "請注意，結果很大程度取決於物業價格、租金和股票市場的增長率。較低的物業增長或較高的股票回報可能有利於租賃，而較強的物業升值則有利於購買。"
+)
+st.subheader(txt("Interpretation and summary", "結果與解釋"))
+st.write(txt(summary_en, summary_zh))
+
+    # Provide a simple conclusion on which strategy appears better under the current
+    # assumptions.  Use different messages depending on the sign of the wealth
+    # difference.
+if diff > 0:
+    conclusion_en = (
+        f"Based on these assumptions, buying appears to be the better option, as it results in a median final wealth {percent_diff*100:.1f}% higher than renting. "
+        "The leverage from a mortgage and the potential for property appreciation outweigh the opportunity cost of investing solely in the stock market."
+    )
+    conclusion_zh = (
+        f"根據這些假設，購買似乎更有利，其最終財富中位數比租賃高 {percent_diff*100:.1f}%。" \
+        "按揭槓桿和物業升值的潛力超過了單純投資股市的機會成本。"
+    )
+    st.success(txt(conclusion_en, conclusion_zh))
+elif diff < 0:
+    conclusion_en = (
+        f"Under the current inputs, renting appears to produce a higher median wealth (by {abs(percent_diff*100):.1f}%). "
+        "This suggests that, given the assumed growth rates, investing your surplus cash in the stock market can beat the returns from leveraged property ownership."
+    )
+    conclusion_zh = (
+        f"在當前條件下，租賃似乎能產生更高的最終財富（高出 {abs(percent_diff*100):.1f}%）。" \
+        "這意味著在這些增長假設下，將剩餘資金投資於股市的回報勝過利用按揭購買物業。"
+    )
+    st.warning(txt(conclusion_en, conclusion_zh))
+else:
+    conclusion_en = "Under these particular assumptions, buying and renting produce nearly identical outcomes. The choice may come down to lifestyle preferences and risk tolerance."
+    conclusion_zh = "在這些假設下，購買和租賃的結果幾乎相同。這樣的情況下選擇更多取決於個人生活方式和風險偏好。"
+    st.info(txt(conclusion_en, conclusion_zh))
