@@ -120,6 +120,14 @@ def simulate(
     """Run a Monte Carlo simulation for buy vs rent decision.
 
     Returns percentiles of accumulated wealth and contributions for buying and renting.
+
+    In both scenarios the initial capital—comprised of the down‑payment and all upfront
+    purchase‑related costs (stamp duty, legal fees, agent fees, renovation and
+    miscellaneous expenses)—is treated as a lump sum investment.  In the buy
+    scenario this capital goes into the property (down‑payment) and is not invested
+    elsewhere, but in the rent scenario it is invested in the stock market
+    immediately and compounds at the same simulated S&P returns as any subsequent
+    surplus cash.
     """
     props = np.random.uniform(prop_min, prop_max, (runs, years))
     rents = np.random.uniform(rent_min, rent_max, (runs, years))
@@ -443,8 +451,8 @@ col3.metric(txt("Monthly mortgage payment", "每月按揭付款"), f"HK$ {monthl
 # Plot detailed wealth projections and contributions
 import matplotlib.pyplot as plt
 
-# Wealth projections: 10th, 50th (median) and 90th percentiles for both strategies
-fig, ax = plt.subplots(figsize=(8, 4))
+# Build two separate figures for the wealth projection and contributions.
+fig, ax = plt.subplots(figsize=(6, 4))
 percentiles = ["10th", "50th", "90th"]
 colors_buy = ["#c6dbef", "#6baed6", "#2171b5"]  # light to dark blue for buy
 colors_rent = ["#c7e9c0", "#74c476", "#238b45"]  # light to dark green for rent
@@ -455,17 +463,21 @@ ax.set_xlabel("Year")
 ax.set_ylabel("Accumulated wealth (HK$)")
 ax.set_title(txt("Buy vs Rent wealth projections", "購買與租賃財富預測"))
 ax.legend(loc="upper left", fontsize="small")
-st.pyplot(fig)
 
-# Median cumulative contributions invested for both strategies
-fig2, ax2 = plt.subplots(figsize=(8, 3))
+fig2, ax2 = plt.subplots(figsize=(6, 4))
 ax2.plot(yr, bc, label=txt("Buy – Contributions", "購買 – 投入金額"), color="#6baed6")
 ax2.plot(yr, rc, label=txt("Rent – Contributions", "租賃 – 投入金額"), color="#74c476")
 ax2.set_xlabel("Year")
 ax2.set_ylabel("Contributions (HK$)")
 ax2.set_title(txt("Median contributions over time", "投入金額中位數隨時間變化"))
 ax2.legend(loc="upper left", fontsize="small")
-st.pyplot(fig2)
+
+# Display the charts side by side to reduce scrolling.
+chart_col1, chart_col2 = st.columns(2)
+with chart_col1:
+    st.pyplot(fig)
+with chart_col2:
+    st.pyplot(fig2)
 
 # Summarise final median outcomes and differences
 final_buy = bp[1][-1]
@@ -478,6 +490,60 @@ col4.metric(txt("Median final wealth (Buy)", "購買策略最終財富中位數"
 col5.metric(txt("Median final wealth (Rent)", "租賃策略最終財富中位數"), f"HK$ {final_rent:,.0f}")
 sign = "+" if diff >= 0 else "-"
 col6.metric(txt("Difference (Buy − Rent)", "購買與租賃差額"), f"{sign}HK$ {abs(diff):,.0f}")
+
+# ---- Detailed summary table ----
+# Compute additional statistics for the final year to provide a richer summary.
+final_buy_10 = bp[0][-1]
+final_buy_90 = bp[2][-1]
+final_rent_10 = rp[0][-1]
+final_rent_90 = rp[2][-1]
+# Return on investment based on median wealth and contributions. Avoid division by zero.
+roi_buy = final_buy / final_bc if final_bc else 0
+roi_rent = final_rent / final_rc if final_rc else 0
+percent_diff = (diff / final_rent) if final_rent else 0
+# Build a summary table capturing key figures.  All values are converted to strings
+# upfront so that Streamlit displays them neatly and consistently.
+summary_rows = [
+    {
+        "Statistic": txt("10th percentile final wealth", "第10百分位最終財富"),
+        "Buy (HK$)": f"HK$ {final_buy_10:,.0f}",
+        "Rent (HK$)": f"HK$ {final_rent_10:,.0f}",
+    },
+    {
+        "Statistic": txt("Median final wealth", "最終財富中位數"),
+        "Buy (HK$)": f"HK$ {final_buy:,.0f}",
+        "Rent (HK$)": f"HK$ {final_rent:,.0f}",
+    },
+    {
+        "Statistic": txt("90th percentile final wealth", "第90百分位最終財富"),
+        "Buy (HK$)": f"HK$ {final_buy_90:,.0f}",
+        "Rent (HK$)": f"HK$ {final_rent_90:,.0f}",
+    },
+    {
+        "Statistic": txt("Median contributions", "投入金額中位數"),
+        "Buy (HK$)": f"HK$ {final_bc:,.0f}",
+        "Rent (HK$)": f"HK$ {final_rc:,.0f}",
+    },
+    {
+        "Statistic": txt("Return on investment (median wealth / median contributions)", "投資回報率 (中位財富除以中位投入)"),
+        "Buy (HK$)": f"{roi_buy:.2f}x",
+        "Rent (HK$)": f"{roi_rent:.2f}x",
+    },
+    {
+        "Statistic": txt("Absolute difference (Buy − Rent)", "絕對差額 (購買 − 租賃)"),
+        "Buy (HK$)": f"HK$ {diff:,.0f}",
+        "Rent (HK$)": "",
+    },
+    {
+        "Statistic": txt("Percentage difference (Buy vs Rent)", "百分比差異"),
+        "Buy (HK$)": f"{percent_diff*100:.1f}%",
+        "Rent (HK$)": "",
+    },
+]
+df_summary = pd.DataFrame(summary_rows)
+
+st.subheader(txt("Summary statistics", "彙總統計"))
+st.dataframe(df_summary, hide_index=True)
 
 # ---- Sensitivity analysis ----
 st.subheader("Sensitivity to median growth assumptions")
